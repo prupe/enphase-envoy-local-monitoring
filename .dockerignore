@@ -1,3 +1,6 @@
 .git
 enphase-envoy-local-monitoring
-data
+docker-compose-yml
+*.json
+README.md
+img

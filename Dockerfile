@@ -7,4 +7,5 @@ RUN go build
 FROM scratch
 
 COPY --from=build /opt/enphase-envoy-local-monitoring /bin/
-ENTRYPOINT /bin/enphase-envoy-local-monitoring
+USER 500:500
+ENTRYPOINT ["/bin/enphase-envoy-local-monitoring"]
