@@ -8,15 +8,15 @@ The current end functionality is not too dissimilar to: https://github.com/fabie
 
 **Note**: there is the official [Enphase Enlighten API](https://developer.enphase.com/docs).  I chose to go local mainly for simplicity, interest, and assumably reactivity.  As per the top of the documentation (as at 2019/01), the official API "does not provide performance data at a panel or microinverter level".  The internal API used does not provide this either.  Additionally, I assume the internal API format currently used could be subject to change without notice.
 
-![Day View Example](img/grafana_day_view.png "Grafana Day View")
+![Day View Example](doc/img/grafana_day_view.png "Grafana Day View")
 
 The finer grained monitoring can allow one to more easily see e.g. when clouds have affected output and the kettle requires consumption from the grid:
-![Zoom-In Example](img/grafana_midday_zoom.png "Grafana Midday Zoom")
-or the fidge kicking in pattern at night:
-![Fridge Pattern](img/grafana_including_nighttime.png "Grafana including nighttime")
+![Zoom-In Example](doc/img/grafana_midday_zoom.png "Grafana Midday Zoom")
+or the fridge kicking in pattern at night:
+![Fridge Pattern](doc/img/grafana_including_nighttime.png "Grafana including nighttime")
 
 vs MyEnlighten app view:
-![My Enlighten](img/myenlighten_ss.jpg "My Enlighten app view")
+![My Enlighten](doc/img/myenlighten_ss.jpg "My Enlighten app view")
 
 
 ## Usage
@@ -37,11 +37,5 @@ Usage of ./influxEnvoyStats:
     	Influx measurement name customisation (table name equivalent) (default "readings")
 ```
 
-
-
-
 ## Set-up
 I wanted this lightweight monitoring to run on my Raspberry Pi (currently running [Stretch](https://www.raspberrypi.org/downloads/raspbian/)), but is also possible to run on OSX or other Linux.
-
-
-
