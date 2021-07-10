@@ -21,12 +21,6 @@ import (
 	"time"
 )
 
-func check(e error) {
-	if e != nil {
-		panic(e)
-	}
-}
-
 type EnvoyAPIMeasurement struct {
 	Production  json.RawMessage
 	Consumption json.RawMessage
@@ -57,6 +51,19 @@ type Eim struct {
 	VarhLagToday     float64
 }
 
+type Context struct {
+	envoyHostPtr       *string
+	influxAddrPtr      *string
+	dbNamePtr          *string
+	dbUserPtr          *string
+	dbPwPtr            *string
+	measurementNamePtr *string
+	loopIntervalPtr    *time.Duration
+
+	envoyClient  http.Client
+	influxClient client.HTTPClient
+}
+
 func main() {
 	envoyHostPtr := flag.String("e", "envoy", "IP or hostname of Envoy")
 	influxAddrPtr := flag.String("dba", "http://localhost:8086", "InfluxDB connection address")
@@ -64,36 +71,87 @@ func main() {
 	dbUserPtr := flag.String("dbu", "user", "DB username")
 	dbPwPtr := flag.String("dbp", "pw", "DB password")
 	measurementNamePtr := flag.String("m", "readings", "Influx measurement name customisation (table name equivalent)")
+	loopIntervalPtr := flag.Duration("loop", 0, "Loop interval (0 means poll once and exit)")
 	flag.Parse()
 
-	envoyUrl := "http://" + *envoyHostPtr + "/production.json?details=1"
-	envoyClient := http.Client{
-		Timeout: time.Second * 2, // Maximum of 2 secs
+	context := Context{
+		envoyHostPtr:       envoyHostPtr,
+		influxAddrPtr:      influxAddrPtr,
+		dbNamePtr:          dbNamePtr,
+		dbUserPtr:          dbUserPtr,
+		dbPwPtr:            dbPwPtr,
+		measurementNamePtr: measurementNamePtr,
+		loopIntervalPtr:    loopIntervalPtr,
+
+		envoyClient: http.Client{
+			Timeout: time.Second * 2, // Maximum of 2 secs
+		},
 	}
 
-	// Connect to influxdb specified in commandline arguments
-	influxClient, err := client.NewHTTPClient(client.HTTPConfig{
-		Addr:     *influxAddrPtr,
-		Username: *dbUserPtr,
-		Password: *dbPwPtr,
-	})
-	check(err)
-	defer influxClient.Close()
+	defer func() {
+		if context.influxClient != nil {
+			context.influxClient.Close()
+		}
+	}()
 
-	prodReadings, consumptionReadings, err := pollEnvoy(&envoyClient, &envoyUrl)
-	check(err)
-
-	err = writeToInflux(influxClient, dbNamePtr, measurementNamePtr, prodReadings, consumptionReadings)
-	check(err)
+	if *loopIntervalPtr > 0 {
+		ticker := time.NewTicker(*loopIntervalPtr)
+		quit := make(chan struct{})
+		//go func() {
+		for {
+			select {
+			case <-ticker.C:
+				err := poll(&context)
+				if err != nil {
+					fmt.Printf("Error: %s\n", err)
+				}
+			case <-quit:
+				ticker.Stop()
+				return
+			}
+		}
+		//}()
+	} else {
+		err := poll(&context)
+		if err != nil {
+			panic(err)
+		}
+	}
 }
 
-func pollEnvoy(envoyClient *http.Client, envoyUrl *string) (prodReadings Eim, consumptionReadings []Eim, err error) {
-	req, err := http.NewRequest(http.MethodGet, *envoyUrl, nil)
-	check(err)
-	resp, err := envoyClient.Do(req)
-	check(err)
+func poll(context *Context) (err error) {
+	prodReadings, consumptionReadings, err := pollEnvoy(context)
+	if err != nil {
+		return
+	}
+
+	err = writeToInflux(context, prodReadings, consumptionReadings)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+func pollEnvoy(context *Context) (prodReadings Eim, consumptionReadings []Eim, err error) {
+	prodReadings = Eim{}
+	consumptionReadings = nil
+
+	envoyUrl := "http://" + *context.envoyHostPtr + "/production.json?details=1"
+	req, err := http.NewRequest(http.MethodGet, envoyUrl, nil)
+	if err != nil {
+		return
+	}
+
+	resp, err := context.envoyClient.Do(req)
+	if err != nil {
+		return
+	}
+
 	jsonData, err := ioutil.ReadAll(resp.Body)
-	check(err)
+	if err != nil {
+		return
+	}
 
 	var apiJsonObj struct {
 		Production  json.RawMessage
@@ -101,32 +159,41 @@ func pollEnvoy(envoyClient *http.Client, envoyUrl *string) (prodReadings Eim, co
 		Storage     json.RawMessage
 	}
 	err = json.Unmarshal(jsonData, &apiJsonObj)
-	check(err)
+	if err != nil {
+		return
+	}
 
 	inverters := Inverters{}
 	prodReadings = Eim{}
 	productionObj := []interface{}{&inverters, &prodReadings}
 	err = json.Unmarshal(apiJsonObj.Production, &productionObj)
-	check(err)
+	if err != nil {
+		return
+	}
 
 	fmt.Printf("%d production: %.3f\n", prodReadings.ReadingTime, prodReadings.WNow)
 
 	consumptionReadings = []Eim{}
 	err = json.Unmarshal(apiJsonObj.Consumption, &consumptionReadings)
-	check(err)
+	if err != nil {
+		return
+	}
+
 	for _, eim := range consumptionReadings {
 		fmt.Printf("%d %s: %.3f\n", eim.ReadingTime, eim.MeasurementType, eim.WNow)
 	}
 
-	return prodReadings, consumptionReadings, nil
+	return
 }
 
-func writeToInflux(influxClient client.HTTPClient, dbNamePtr, measurementNamePtr *string, prodReadings Eim, consumptionReadings []Eim) error {
+func writeToInflux(context *Context, prodReadings Eim, consumptionReadings []Eim) (err error) {
 	bp, err := client.NewBatchPoints(client.BatchPointsConfig{
-		Database:  *dbNamePtr,
+		Database:  *context.dbNamePtr,
 		Precision: "s",
 	})
-	check(err)
+	if err != nil {
+		return
+	}
 
 	readings := append(consumptionReadings, prodReadings)
 	for _, reading := range readings {
@@ -137,20 +204,41 @@ func writeToInflux(influxClient client.HTTPClient, dbNamePtr, measurementNamePtr
 			"watts": reading.WNow,
 		}
 		createdTime := time.Unix(reading.ReadingTime, 0)
-		check(err)
-		pt, err := client.NewPoint(
-			*measurementNamePtr,
+		if err != nil {
+			return
+		}
+
+		var pt *client.Point
+		pt, err = client.NewPoint(
+			*context.measurementNamePtr,
 			tags,
 			fields,
 			createdTime,
 		)
-		check(err)
+		if err != nil {
+			return
+		}
+
 		bp.AddPoint(pt)
 	}
 
-	// Write the batch
-	err = influxClient.Write(bp)
-	check(err)
+	// Connect to influxdb specified in commandline arguments
+	if context.influxClient == nil {
+		context.influxClient, err = client.NewHTTPClient(client.HTTPConfig{
+			Addr:     *context.influxAddrPtr,
+			Username: *context.dbUserPtr,
+			Password: *context.dbPwPtr,
+		})
+		if err != nil {
+			return
+		}
+	}
 
-	return nil
+	// Write the batch
+	err = context.influxClient.Write(bp)
+	if err != nil {
+		return
+	}
+
+	return
 }
