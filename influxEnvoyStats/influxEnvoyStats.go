@@ -70,7 +70,25 @@ func main() {
 	envoyClient := http.Client{
 		Timeout: time.Second * 2, // Maximum of 2 secs
 	}
-	req, err := http.NewRequest(http.MethodGet, envoyUrl, nil)
+
+	// Connect to influxdb specified in commandline arguments
+	influxClient, err := client.NewHTTPClient(client.HTTPConfig{
+		Addr:     *influxAddrPtr,
+		Username: *dbUserPtr,
+		Password: *dbPwPtr,
+	})
+	check(err)
+	defer influxClient.Close()
+
+	prodReadings, consumptionReadings, err := pollEnvoy(&envoyClient, &envoyUrl)
+	check(err)
+
+	err = writeToInflux(influxClient, dbNamePtr, measurementNamePtr, prodReadings, consumptionReadings)
+	check(err)
+}
+
+func pollEnvoy(envoyClient *http.Client, envoyUrl *string) (prodReadings Eim, consumptionReadings []Eim, err error) {
+	req, err := http.NewRequest(http.MethodGet, *envoyUrl, nil)
 	check(err)
 	resp, err := envoyClient.Do(req)
 	check(err)
@@ -86,29 +104,24 @@ func main() {
 	check(err)
 
 	inverters := Inverters{}
-	prodReadings := Eim{}
+	prodReadings = Eim{}
 	productionObj := []interface{}{&inverters, &prodReadings}
 	err = json.Unmarshal(apiJsonObj.Production, &productionObj)
 	check(err)
 
 	fmt.Printf("%d production: %.3f\n", prodReadings.ReadingTime, prodReadings.WNow)
 
-	consumptionReadings := []Eim{}
+	consumptionReadings = []Eim{}
 	err = json.Unmarshal(apiJsonObj.Consumption, &consumptionReadings)
 	check(err)
 	for _, eim := range consumptionReadings {
 		fmt.Printf("%d %s: %.3f\n", eim.ReadingTime, eim.MeasurementType, eim.WNow)
 	}
 
-	// Connect to influxdb specified in commandline arguments
-	c, err := client.NewHTTPClient(client.HTTPConfig{
-		Addr:     *influxAddrPtr,
-		Username: *dbUserPtr,
-		Password: *dbPwPtr,
-	})
-	check(err)
-	defer c.Close()
+	return prodReadings, consumptionReadings, nil
+}
 
+func writeToInflux(influxClient client.HTTPClient, dbNamePtr, measurementNamePtr *string, prodReadings Eim, consumptionReadings []Eim) error {
 	bp, err := client.NewBatchPoints(client.BatchPointsConfig{
 		Database:  *dbNamePtr,
 		Precision: "s",
@@ -136,9 +149,8 @@ func main() {
 	}
 
 	// Write the batch
-	err = c.Write(bp)
+	err = influxClient.Write(bp)
 	check(err)
 
-	err = c.Close()
-	check(err)
+	return nil
 }
