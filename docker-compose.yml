@@ -4,7 +4,7 @@ services:
   envoy:
     build: influxEnvoyStats
     hostname: envoy
-    command: "-dba http://influxdb:8086 -dbn envoy -dbp envoy -dbu envoy -e ${ENVOY_HOST:-envoy}"
+    command: "-dba http://influxdb:8086 -dbn envoy -dbp envoy123456 -dbu envoy -e ${ENVOY_HOST:-envoy}"
     volumes:
       - /etc/passwd:/etc/passwd:ro
       - /etc/group:/etc/group:ro
