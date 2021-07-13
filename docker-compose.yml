@@ -3,7 +3,7 @@ version: "3.9"
 services:
   monitor:
     build: influxEnvoyStats
-    hostname: envoy
+    hostname: monitor
     command: "-dba http://influxdb:8086 -dbn envoy -dbp envoy123456 -dbu envoy -e ${ENVOY_HOST:-envoy} -loop ${ENVOY_POLL_INTERVAL:-60s}"
     environment:
       USER: ${USER}
