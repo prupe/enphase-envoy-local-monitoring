@@ -5,7 +5,7 @@ datasources:
     type: influxdb
     access: proxy
     url: http://influxdb:8086
-    user: envoy
+    user: grafana
     password: envoy123456
     database: envoy
     isDefault: true

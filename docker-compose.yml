@@ -4,7 +4,7 @@ services:
   monitor:
     build: influxEnvoyStats
     hostname: monitor
-    command: "-dba http://influxdb:8086 -dbn envoy -dbp envoy123456 -dbu envoy -e ${ENVOY_HOST:-envoy} -loop ${ENVOY_POLL_INTERVAL:-60s}"
+    command: "-dba http://influxdb:8086 -dbn envoy -dbo envoy -dbp envoy123456 -dbu monitor -e ${ENVOY_HOST:-envoy} -loop ${ENVOY_POLL_INTERVAL:-10s}"
     environment:
       USER: ${USER}
     depends_on:
@@ -15,10 +15,11 @@ services:
     hostname: influxdb
     volumes:
       - influxdb:/var/lib/influxdb
+      - ./influxdb/init.d:/docker-entrypoint-initdb.d:ro
     environment:
       DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_USERNAME: envoy
-      DOCKER_INFLUXDB_INIT_PASSWORD: envoy123456
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: admin123456
       DOCKER_INFLUXDB_INIT_ORG: envoy
       DOCKER_INFLUXDB_INIT_BUCKET: envoy
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: envoy123456

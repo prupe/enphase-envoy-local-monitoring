@@ -12,13 +12,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/influxdata/influxdb/client/v2"
 	"io/ioutil"
 	"net/http"
 	"time"
+
+	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
+	"github.com/influxdata/influxdb-client-go/v2/api"
 )
 
 type EnvoyAPIMeasurement struct {
@@ -51,33 +54,37 @@ type Eim struct {
 	VarhLagToday     float64
 }
 
-type Context struct {
+type EnvoyMonitor struct {
 	envoyHostPtr       *string
 	influxAddrPtr      *string
-	dbNamePtr          *string
+	dbOrgPtr           *string
+	dbBucketPtr        *string
 	dbUserPtr          *string
 	dbPwPtr            *string
 	measurementNamePtr *string
 	loopIntervalPtr    *time.Duration
 
 	envoyClient  http.Client
-	influxClient client.HTTPClient
+	influxClient influxdb2.Client
+	writeAPI     api.WriteAPIBlocking
 }
 
 func main() {
 	envoyHostPtr := flag.String("e", "envoy", "IP or hostname of Envoy")
 	influxAddrPtr := flag.String("dba", "http://localhost:8086", "InfluxDB connection address")
-	dbNamePtr := flag.String("dbn", "solar", "Influx database name to put readings in")
+	dbOrgPtr := flag.String("dbo", "solar", "Influx database org to put readings in")
+	dbBucketPtr := flag.String("dbn", "solar", "Influx database name to put readings in")
 	dbUserPtr := flag.String("dbu", "user", "DB username")
 	dbPwPtr := flag.String("dbp", "pw", "DB password")
 	measurementNamePtr := flag.String("m", "readings", "Influx measurement name customisation (table name equivalent)")
 	loopIntervalPtr := flag.Duration("loop", 0, "Loop interval (0 means poll once and exit)")
 	flag.Parse()
 
-	context := Context{
+	monitor := EnvoyMonitor{
 		envoyHostPtr:       envoyHostPtr,
 		influxAddrPtr:      influxAddrPtr,
-		dbNamePtr:          dbNamePtr,
+		dbOrgPtr:           dbOrgPtr,
+		dbBucketPtr:        dbBucketPtr,
 		dbUserPtr:          dbUserPtr,
 		dbPwPtr:            dbPwPtr,
 		measurementNamePtr: measurementNamePtr,
@@ -89,8 +96,8 @@ func main() {
 	}
 
 	defer func() {
-		if context.influxClient != nil {
-			context.influxClient.Close()
+		if monitor.influxClient != nil {
+			monitor.influxClient.Close()
 		}
 	}()
 
@@ -101,7 +108,7 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
-				err := poll(&context)
+				err := poll(&monitor)
 				if err != nil {
 					fmt.Printf("Error: %s\n", err)
 				}
@@ -112,20 +119,20 @@ func main() {
 		}
 		//}()
 	} else {
-		err := poll(&context)
+		err := poll(&monitor)
 		if err != nil {
 			panic(err)
 		}
 	}
 }
 
-func poll(context *Context) (err error) {
-	prodReadings, consumptionReadings, err := pollEnvoy(context)
+func poll(monitor *EnvoyMonitor) (err error) {
+	prodReadings, consumptionReadings, err := pollEnvoy(monitor)
 	if err != nil {
 		return
 	}
 
-	err = writeToInflux(context, prodReadings, consumptionReadings)
+	err = writeToInflux(monitor, prodReadings, consumptionReadings)
 	if err != nil {
 		return
 	}
@@ -133,17 +140,17 @@ func poll(context *Context) (err error) {
 	return
 }
 
-func pollEnvoy(context *Context) (prodReadings Eim, consumptionReadings []Eim, err error) {
+func pollEnvoy(monitor *EnvoyMonitor) (prodReadings Eim, consumptionReadings []Eim, err error) {
 	prodReadings = Eim{}
 	consumptionReadings = nil
 
-	envoyUrl := "http://" + *context.envoyHostPtr + "/production.json?details=1"
+	envoyUrl := "http://" + *monitor.envoyHostPtr + "/production.json?details=1"
 	req, err := http.NewRequest(http.MethodGet, envoyUrl, nil)
 	if err != nil {
 		return
 	}
 
-	resp, err := context.envoyClient.Do(req)
+	resp, err := monitor.envoyClient.Do(req)
 	if err != nil {
 		return
 	}
@@ -186,13 +193,11 @@ func pollEnvoy(context *Context) (prodReadings Eim, consumptionReadings []Eim, e
 	return
 }
 
-func writeToInflux(context *Context, prodReadings Eim, consumptionReadings []Eim) (err error) {
-	bp, err := client.NewBatchPoints(client.BatchPointsConfig{
-		Database:  *context.dbNamePtr,
-		Precision: "s",
-	})
-	if err != nil {
-		return
+func writeToInflux(monitor *EnvoyMonitor, prodReadings Eim, consumptionReadings []Eim) (err error) {
+	// Connect to influxdb specified in commandline arguments
+	if monitor.influxClient == nil {
+		monitor.influxClient = influxdb2.NewClient(*monitor.influxAddrPtr, fmt.Sprintf("%s:%s", *monitor.dbUserPtr, *monitor.dbPwPtr))
+		monitor.writeAPI = monitor.influxClient.WriteAPIBlocking(*monitor.dbOrgPtr, *monitor.dbBucketPtr)
 	}
 
 	readings := append(consumptionReadings, prodReadings)
@@ -204,40 +209,18 @@ func writeToInflux(context *Context, prodReadings Eim, consumptionReadings []Eim
 			"watts": reading.WNow,
 		}
 		createdTime := time.Unix(reading.ReadingTime, 0)
-		if err != nil {
-			return
-		}
 
-		var pt *client.Point
-		pt, err = client.NewPoint(
-			*context.measurementNamePtr,
+		pt := influxdb2.NewPoint(
+			*monitor.measurementNamePtr,
 			tags,
 			fields,
 			createdTime,
 		)
+
+		err = monitor.writeAPI.WritePoint(context.Background(), pt)
 		if err != nil {
 			return
 		}
-
-		bp.AddPoint(pt)
-	}
-
-	// Connect to influxdb specified in commandline arguments
-	if context.influxClient == nil {
-		context.influxClient, err = client.NewHTTPClient(client.HTTPConfig{
-			Addr:     *context.influxAddrPtr,
-			Username: *context.dbUserPtr,
-			Password: *context.dbPwPtr,
-		})
-		if err != nil {
-			return
-		}
-	}
-
-	// Write the batch
-	err = context.influxClient.Write(bp)
-	if err != nil {
-		return
 	}
 
 	return
