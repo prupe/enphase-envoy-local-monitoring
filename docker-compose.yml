@@ -4,7 +4,7 @@ services:
   monitor:
     build: influxEnvoyStats
     hostname: monitor
-    command: "-dba http://influxdb:8086 -dbn envoy -dbo envoy -dbp envoy123456 -dbu monitor -e ${ENVOY_HOST:-envoy} -loop ${ENVOY_POLL_INTERVAL:-10s}"
+    command: "-dba http://influxdb:8086 -dbn envoy -dbo envoy -dbp envoy123456 -e ${ENVOY_HOST:-envoy} -loop ${ENVOY_POLL_INTERVAL:-10s}"
     environment:
       USER: ${USER}
     depends_on:
@@ -23,11 +23,9 @@ services:
       DOCKER_INFLUXDB_INIT_ORG: envoy
       DOCKER_INFLUXDB_INIT_BUCKET: envoy
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: envoy123456
-      INFLUX_HOST: influxdb
+      INFLUX_HOST: http://influxdb:8086
       INFLUX_ORG: envoy
       INFLUX_TOKEN: envoy123456
-    ports:
-      - "8086:8086"
 
   grafana:
     image: grafana/grafana

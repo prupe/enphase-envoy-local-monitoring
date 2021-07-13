@@ -196,7 +196,7 @@ func pollEnvoy(monitor *EnvoyMonitor) (prodReadings Eim, consumptionReadings []E
 func writeToInflux(monitor *EnvoyMonitor, prodReadings Eim, consumptionReadings []Eim) (err error) {
 	// Connect to influxdb specified in commandline arguments
 	if monitor.influxClient == nil {
-		monitor.influxClient = influxdb2.NewClient(*monitor.influxAddrPtr, fmt.Sprintf("%s:%s", *monitor.dbUserPtr, *monitor.dbPwPtr))
+		monitor.influxClient = influxdb2.NewClient(*monitor.influxAddrPtr, *monitor.dbPwPtr)
 		monitor.writeAPI = monitor.influxClient.WriteAPIBlocking(*monitor.dbOrgPtr, *monitor.dbBucketPtr)
 	}
 
